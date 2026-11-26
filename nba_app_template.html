@@ -127,6 +127,7 @@ footer{color:var(--mute);font-size:13px;padding:20px 0 32px;border-top:1px solid
   </div>
   <input type="search" id="q" placeholder="Search players or colleges" aria-label="Search players or colleges">
   <label><input type="checkbox" id="hideold"> Hide red rows (inactive 2+ seasons)</label>
+  <label><input type="checkbox" id="addin"> Count draft-night trades for the team that got the player</label>
   <label for="status">Status
    <select id="status">
     <option value="all">All players</option>
@@ -191,10 +192,10 @@ const codes = Object.keys(T);
 let team = "PHI", sortK = 8, sortDir = "desc", view = "top";
 
 function load(){
-  try{ const s = JSON.parse(localStorage.getItem("ndf") || "{}"); if(T[s.team]) team = s.team; if(s.view === "all") view = "all"; $("hideold").checked = !!s.hideold; if(ST[s.status] || s.status === "in") $("status").value = s.status; }catch(e){}
+  try{ const s = JSON.parse(localStorage.getItem("ndf") || "{}"); if(T[s.team]) team = s.team; if(s.view === "all") view = "all"; $("hideold").checked = !!s.hideold; $("addin").checked = !!s.addin; if(ST[s.status] || s.status === "in") $("status").value = s.status; }catch(e){}
   const h = location.hash.slice(1).toUpperCase(); if(T[h]) team = h;
 }
-function save(){ try{ localStorage.setItem("ndf", JSON.stringify({team, view, hideold:$("hideold").checked, status:$("status").value})); }catch(e){} }
+function save(){ try{ localStorage.setItem("ndf", JSON.stringify({team, view, hideold:$("hideold").checked, addin:$("addin").checked, status:$("status").value})); }catch(e){} }
 
 $("picker").innerHTML = codes.map(c => `<button type="button" id="t-${c}" data-t="${c}" title="${T[c][0]}" aria-pressed="false">${c}</button>`).join("");
 
@@ -215,11 +216,15 @@ const statusText = r => r[13] ? `Traded here before debut (drafted by ${r[13]})`
 // One team's lists with the current filters. Top 20 = drafted active, undrafted active, then inactive.
 function build(tc){
   const q = $("q").value.trim().toLowerCase(), st = $("status").value;
-  const keep = r => (!$("hideold").checked || !isOld(r)) && (st === "all" || st === "in" || r[9] === st) && (!q || (r[0]+" "+(r[3]||"")).toLowerCase().includes(q));
+  // Players drafted elsewhere whose rights came to this team before their debut (r[13] = drafting team).
+  // On the receiving team, "still with team" means still with this team.
+  const traded = codes.flatMap(c => (DATA[c] || []).filter(r => r[9] === "t" && r[10] === tc)
+    .map(r => { const x = r.slice(); x[13] = c; x[7] = r[6] === tc ? "Yes" : "No"; return x; }));
+  const statusOf = r => r[13] ? "in" : r[9];
+  const keep = r => (!$("hideold").checked || !isOld(r)) && (st === "all" || statusOf(r) === st) && (!q || (r[0]+" "+(r[3]||"")).toLowerCase().includes(q));
   const incoming = st === "in";
-  const all = incoming
-    ? codes.flatMap(c => (DATA[c] || []).filter(r => r[9] === "t" && r[10] === tc).map(r => { const x = r.slice(); x[13] = c; return x; }))
-    : (DATA[tc] || []);
+  const credit = $("addin").checked;   // count pre-debut trades for the team that got the player
+  const all = incoming ? traded : (DATA[tc] || []).filter(r => !(credit && r[9] === "t")).concat(credit ? traded : []);
   const und = incoming ? [] : (UND[tc] || []);
   const byWs = (a,b) => (b[8]||0) - (a[8]||0);
   const D0 = all.map(r => ["d", r]), U0 = und.map(r => ["u", r]);
@@ -320,7 +325,7 @@ document.querySelectorAll("th button").forEach(b => b.addEventListener("click", 
 }));
 $("v-top").addEventListener("click", () => { view = "top"; render(); });
 $("v-all").addEventListener("click", () => { view = "all"; render(); });
-["q","hideold","status"].forEach(id => $(id).addEventListener("input", render));
+["q","hideold","addin","status"].forEach(id => $(id).addEventListener("input", render));
 
 // ---- Excel export (SheetJS). In claude.ai the file goes through the downloads capability;
 // opened as a local file it downloads directly.
