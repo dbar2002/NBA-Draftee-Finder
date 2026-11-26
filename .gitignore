@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+run.log
+.DS_Store
+# local run output (the published copy lives in docs/)
+/NBA_Active_Draftees_by_Team.xlsx
+/NBA_Draftee_Finder.html

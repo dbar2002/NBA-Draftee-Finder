@@ -62,6 +62,16 @@ TEAM_NAMES = {
 
 ROSTERS = {}  # filled in main(): pid -> current-season team
 
+LINK = Font(color="0563C1", underline="single")
+
+
+def link_cell(c, pid):
+    """Turn a player-name cell into a link to his Basketball-Reference page."""
+    if pid:
+        c.hyperlink = profile_url(pid)
+        c.font = LINK
+
+
 RED = PatternFill("solid", fgColor="F4B6B6")
 HEADER = PatternFill("solid", fgColor="F3F3F3")
 
@@ -151,7 +161,9 @@ def get_active_players(f):
             pid = a["href"].rsplit("/", 1)[-1].replace(".html", "")
             to, frm = cell(tr, "year_max"), cell(tr, "year_min")
             active[pid] = {"name": a.get_text(strip=True), "last": int(to) if to.isdigit() else 0,
-                           "first": int(frm) if frm.isdigit() else 0}
+                           "first": int(frm) if frm.isdigit() else 0,
+                           "pos": cell(tr, "pos"), "height": cell(tr, "height"),
+                           "college": cell(tr, "colleges") or None}
         print(f"  players/{letter}: {len(active)} active so far")
     return active
 
@@ -246,6 +258,10 @@ def season_label(end):
     return f"{end - 1}-{str(end)[2:]}"
 
 
+def profile_url(pid):
+    return f"{BASE}/players/{pid[0]}/{pid}.html"
+
+
 def player_row(p, pid, franchise, career, last_seen, current_team, current_end, red_cutoff):
     last = max(p["last"], last_seen.get(pid, 0))  # index can lag a few days
     played_now = last >= current_end
@@ -253,6 +269,10 @@ def player_row(p, pid, franchise, career, last_seen, current_team, current_end, 
     cur = (current_team.get(pid, "") if played_now else "") or rostered or ""
     return {
         "name": p["name"],
+        "pid": pid,
+        "pos": p.get("pos", ""),
+        "height": p.get("height", ""),
+        "college": p.get("college"),
         "first": p["first"],
         "last": last,
         "played": "Yes" if played_now else "No",
@@ -296,7 +316,8 @@ def build_rows(active, drafts, career, last_seen, current_team, current_end, red
         if franchise not in TEAM_NAMES:
             continue
         r = player_row(p, pid, franchise, career, last_seen, current_team, current_end, red_cutoff)
-        r.update(year=d["year"], pick=d["pick"], round="1st" if d["pick"] <= 30 else "2nd", college=d["college"])
+        r.update(year=d["year"], pick=d["pick"], round="1st" if d["pick"] <= 30 else "2nd",
+                 college=d["college"] or r["college"])
         ft = (first_team or {}).get(pid)
         ft = FRANCHISE.get(ft, ft) if ft else None
         r["debut_team"] = ft
@@ -354,6 +375,7 @@ def write_workbook(by_team, undrafted, current_end, out):
             tw.append([t, i, r["name"], kind, how, season_label(r["last"]),
                        r["cur"] or None, r["still"], r["ws"]])
             tw.cell(tw.max_row, 9).number_format = "0.0"
+            link_cell(tw.cell(tw.max_row, 3), r.get("pid"))
             if r["red"]:
                 for c in tw[tw.max_row]:
                     c.fill = RED
@@ -376,6 +398,7 @@ def write_workbook(by_team, undrafted, current_end, out):
                        STATUS[r["status"]] + (f" (debuted with {r['debut_team']})" if r["status"] == "t" else "")])
             row = ws.max_row
             ws.cell(row, 10).number_format = "0.0"
+            link_cell(ws.cell(row, 1), r.get("pid"))
             if r["red"]:
                 for c in ws[row]:
                     c.fill = RED
@@ -383,15 +406,17 @@ def write_workbook(by_team, undrafted, current_end, out):
         ws.append([])
         ws.append(["Undrafted, started here"])
         ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
-        ws.append(["Player", "First Season", None, None, None, "Last Season",
+        ws.append(["Player", "First Season", "Pos", "Height", "College", "Last Season",
                    f"Played {cur}", "Current Team", "Still With Team", "Career WS"])
         for c in ws[ws.max_row]:
             c.fill = HEADER
         for r in undrafted.get(t, []):
-            ws.append([r["name"], season_label(r["first"]) if r["first"] else None, None, None, None,
+            ws.append([r["name"], season_label(r["first"]) if r["first"] else None, r["pos"] or None,
+                       r["height"] or None, r["college"],
                        season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"]])
             row = ws.max_row
             ws.cell(row, 10).number_format = "0.0"
+            link_cell(ws.cell(row, 1), r.get("pid"))
             if r["red"]:
                 for c in ws[row]:
                     c.fill = RED
@@ -408,9 +433,11 @@ def write_app(by_team, undrafted, template, out, as_of, current_end, red_cutoff)
     lab = season_label
     D = {t: [[r["name"], r["year"], r["pick"], r["college"], lab(r["last"]), r["played"],
               r["cur"] or None, r["still"], r["ws"], r.get("status", "l"),
-              r.get("debut_team") if r.get("status") == "t" else None] for r in rows] for t, rows in by_team.items()}
-    U = {t: [[r["name"], lab(r["first"]) if r["first"] else None, None, None, lab(r["last"]), r["played"],
-              r["cur"] or None, r["still"], r["ws"], "w" if r["still"] == "Yes" else "l", None]
+              r.get("debut_team") if r.get("status") == "t" else None, r["pos"], r["height"], None, r["pid"]]
+             for r in rows] for t, rows in by_team.items()}
+    U = {t: [[r["name"], lab(r["first"]) if r["first"] else None, None, r["college"], lab(r["last"]), r["played"],
+              r["cur"] or None, r["still"], r["ws"], "w" if r["still"] == "Yes" else "l", None, r["pos"], r["height"],
+              None, r["pid"]]
              for r in rows] for t, rows in undrafted.items()}
     html = Path(template).read_text(encoding="utf-8")
     html = html.replace("__DATA__", json.dumps(D, ensure_ascii=False, separators=(",", ":")))
