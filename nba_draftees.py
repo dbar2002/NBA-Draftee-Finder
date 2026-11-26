@@ -8,7 +8,7 @@ Pulls from Basketball-Reference:
   * /leagues/NBA_<year>_advanced.html   Win Shares by season (summed to career)
 
 Output: one .xlsx with a Summary tab and one tab per franchise.
-A Top 20 tab ranks each team's best 20: drafted players first, then undrafted
+A Top 18 tab ranks each team's best 18: drafted players first, then undrafted
 starters to fill. Each team tab lists its active draftees, then the active undrafted players who
 played their first NBA season with that team, both ranked by career Win Shares. Players who haven't played in the
 last two seasons and aren't on a current roster are highlighted red and placed at the bottom.
@@ -33,6 +33,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from openpyxl import Workbook
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.styles import Font, PatternFill
 
 BASE = "https://www.basketball-reference.com"
@@ -60,6 +61,7 @@ TEAM_NAMES = {
     "UTA": "Utah Jazz", "WAS": "Washington Wizards",
 }
 
+TWO_WAY_MAX_YEARS = 3  # players with 0-3 years of NBA service can sign two-way deals
 ROSTERS = {}  # filled in main(): pid -> current-season team
 
 LINK = Font(color="0563C1", underline="single")
@@ -280,6 +282,8 @@ def player_row(p, pid, franchise, career, last_seen, current_team, current_end, 
         "still": "Yes" if cur == franchise else "No",
         "ws": round(career.get(pid, 0.0), 1),
         "red": last <= red_cutoff and not rostered,  # on a roster now = not inactive
+        # two-way eligible: 3 or fewer prior NBA seasons (approximated as seasons since debut)
+        "tw": "Yes" if not p["first"] or current_end - p["first"] <= TWO_WAY_MAX_YEARS else None,
     }
 
 
@@ -327,13 +331,19 @@ def build_rows(active, drafts, career, last_seen, current_team, current_end, red
     return {t: rank(v) for t, v in by_team.items()}
 
 
-def top20(drafted, undrafted, n=20):
+def top20(drafted, undrafted, n=18):
     """Drafted first, then undrafted starters, each by career WS; inactive (red) last."""
     key = lambda r: -r["ws"]
     d = [("Drafted", r) for r in drafted]
     u = [("Undrafted", r) for r in undrafted]
     pick = lambda rows, red: sorted([x for x in rows if x[1]["red"] == red], key=lambda x: key(x[1]))
     return (pick(d, False) + pick(u, False) + pick(d, True) + pick(u, True))[:n]
+
+
+def add_table(ws, name, ref):
+    tbl = Table(displayName=name, ref=ref)
+    tbl.tableStyleInfo = TableStyleInfo(name="TableStyleLight1", showRowStripes=False)
+    ws.add_table(tbl)
 
 
 def write_workbook(by_team, undrafted, current_end, out):
@@ -362,10 +372,10 @@ def write_workbook(by_team, undrafted, current_end, out):
     for col in "CDEF":
         s.column_dimensions[col].width = 18
 
-    # Top 20 per team
-    tw = wb.create_sheet("Top 20")
+    # Top 18 per team
+    tw = wb.create_sheet("Top 18")
     tw.append(["Team", "Rank", "Player", "Type", "Draft", "Last Season",
-               "Current Team", "Still With Team", "Career WS"])
+               "Current Team", "Still With Team", "Career WS", "2-Way Eligible"])
     for c in tw[1]:
         c.fill = HEADER
     for t in teams:
@@ -373,20 +383,48 @@ def write_workbook(by_team, undrafted, current_end, out):
             how = f"{r['year']} #{r['pick']}" if kind == "Drafted" else \
                   (f"Undrafted, debut {season_label(r['first'])}" if r["first"] else "Undrafted")
             tw.append([t, i, r["name"], kind, how, season_label(r["last"]),
-                       r["cur"] or None, r["still"], r["ws"]])
+                       r["cur"] or None, r["still"], r["ws"], r.get("tw")])
             tw.cell(tw.max_row, 9).number_format = "0.0"
             link_cell(tw.cell(tw.max_row, 3), r.get("pid"))
             if r["red"]:
                 for c in tw[tw.max_row]:
                     c.fill = RED
     tw.freeze_panes = "A2"
-    tw.auto_filter.ref = f"A1:I{tw.max_row}"
-    for col, w in zip("ABCDEFGHI", [7, 6, 24, 10, 22, 11, 12, 13, 10]):
+    tw.auto_filter.ref = f"A1:J{tw.max_row}"
+    for col, w in zip("ABCDEFGHIJ", [7, 6, 24, 10, 22, 11, 12, 13, 10, 14]):
         tw.column_dimensions[col].width = w
 
+    # every active player in one sortable list
+    aw = wb.create_sheet("All Players")
+    aw.append(["Player", "Team (drafted / started)", "Type", "Draft", "Pos", "Height", "College",
+               "Last Season", f"Played {cur}", "Current Team", "Still With Team", "Career WS", "Status",
+               "2-Way Eligible"])
+    for c in aw[1]:
+        c.fill = HEADER
+    everyone = [(t, "Drafted", r) for t in teams for r in by_team.get(t, [])] + \
+               [(t, "Undrafted", r) for t in teams for r in undrafted.get(t, [])]
+    everyone.sort(key=lambda x: (x[2]["red"], -x[2]["last"], -(x[2]["ws"] or 0)))
+    for t, kind, r in everyone:
+        how = f"{r['year']} #{r['pick']}" if kind == "Drafted" else \
+              (f"Debut {season_label(r['first'])}" if r.get("first") else None)
+        status = (STATUS[r["status"]] + (f" (debuted with {r['debut_team']})" if r["status"] == "t" else "")) \
+                 if kind == "Drafted" and r.get("status") else None
+        aw.append([r["name"], t, kind, how, r.get("pos") or None, r.get("height") or None, r["college"],
+                   season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"], status, r.get("tw")])
+        row = aw.max_row
+        aw.cell(row, 12).number_format = "0.0"
+        link_cell(aw.cell(row, 1), r.get("pid"))
+        if r["red"]:
+            for c in aw[row]:
+                c.fill = RED
+    aw.freeze_panes = "B2"
+    aw.auto_filter.ref = f"A1:N{aw.max_row}"
+    for col, w in zip("ABCDEFGHIJKLMN", [24, 10, 10, 16, 6, 7, 22, 11, 13, 12, 13, 10, 30, 14]):
+        aw.column_dimensions[col].width = w
+
     headers = ["Player", "Draft Year", "Pick", "Round", "College", "Last Season",
-               f"Played {cur}", "Current Team", "Still With Team", "Career WS", "Status"]
-    widths = [24, 10, 6, 7, 22, 11, 13, 12, 13, 11, 30]
+               f"Played {cur}", "Current Team", "Still With Team", "Career WS", "Status", "2-Way Eligible"]
+    widths = [24, 10, 6, 7, 22, 11, 13, 12, 13, 11, 30, 14]
     for t in teams:
         ws = wb.create_sheet(t)
         ws.append(headers)
@@ -395,7 +433,8 @@ def write_workbook(by_team, undrafted, current_end, out):
         for r in by_team.get(t, []):
             ws.append([r["name"], r["year"], r["pick"], r["round"], r["college"],
                        season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"],
-                       STATUS[r["status"]] + (f" (debuted with {r['debut_team']})" if r["status"] == "t" else "")])
+                       STATUS[r["status"]] + (f" (debuted with {r['debut_team']})" if r["status"] == "t" else ""),
+                       r.get("tw")])
             row = ws.max_row
             ws.cell(row, 10).number_format = "0.0"
             link_cell(ws.cell(row, 1), r.get("pid"))
@@ -407,13 +446,14 @@ def write_workbook(by_team, undrafted, current_end, out):
         ws.append(["Undrafted, started here"])
         ws.cell(ws.max_row, 1).font = Font(bold=True, size=12)
         ws.append(["Player", "First Season", "Pos", "Height", "College", "Last Season",
-                   f"Played {cur}", "Current Team", "Still With Team", "Career WS"])
+                   f"Played {cur}", "Current Team", "Still With Team", "Career WS", "2-Way Eligible"])
+        uhead = ws.max_row
         for c in ws[ws.max_row]:
             c.fill = HEADER
         for r in undrafted.get(t, []):
             ws.append([r["name"], season_label(r["first"]) if r["first"] else None, r["pos"] or None,
                        r["height"] or None, r["college"],
-                       season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"]])
+                       season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"], r.get("tw")])
             row = ws.max_row
             ws.cell(row, 10).number_format = "0.0"
             link_cell(ws.cell(row, 1), r.get("pid"))
@@ -421,8 +461,13 @@ def write_workbook(by_team, undrafted, current_end, out):
                 for c in ws[row]:
                     c.fill = RED
         ws.freeze_panes = "B2"
-        ws.auto_filter.ref = f"A1:K{max(len(by_team.get(t, [])) + 1, 2)}"
-        for col, w in zip("ABCDEFGHIJK", widths):
+        # each section is its own Excel table, so both get sort/filter arrows
+        nd, nu = len(by_team.get(t, [])), len(undrafted.get(t, []))
+        if nd:
+            add_table(ws, f"{t}_Drafted", f"A1:L{nd + 1}")
+        if nu:
+            add_table(ws, f"{t}_Undrafted", f"A{uhead}:K{uhead + nu}")
+        for col, w in zip("ABCDEFGHIJKL", widths):
             ws.column_dimensions[col].width = w
     wb.save(out)
 
@@ -433,11 +478,12 @@ def write_app(by_team, undrafted, template, out, as_of, current_end, red_cutoff)
     lab = season_label
     D = {t: [[r["name"], r["year"], r["pick"], r["college"], lab(r["last"]), r["played"],
               r["cur"] or None, r["still"], r["ws"], r.get("status", "l"),
-              r.get("debut_team") if r.get("status") == "t" else None, r["pos"], r["height"], None, r["pid"]]
+              r.get("debut_team") if r.get("status") == "t" else None, r["pos"], r["height"], None, r["pid"],
+              1 if r.get("tw") else 0]
              for r in rows] for t, rows in by_team.items()}
     U = {t: [[r["name"], lab(r["first"]) if r["first"] else None, None, r["college"], lab(r["last"]), r["played"],
               r["cur"] or None, r["still"], r["ws"], "w" if r["still"] == "Yes" else "l", None, r["pos"], r["height"],
-              None, r["pid"]]
+              None, r["pid"], 1 if r.get("tw") else 0]
              for r in rows] for t, rows in undrafted.items()}
     html = Path(template).read_text(encoding="utf-8")
     html = html.replace("__DATA__", json.dumps(D, ensure_ascii=False, separators=(",", ":")))

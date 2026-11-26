@@ -2,7 +2,7 @@
 
 Every active NBA player listed under the team that drafted him, plus undrafted
 players under the team they played their first NBA season for. Each team gets a
-Top 20 (drafted players first, undrafted starters fill the rest), ranked by career
+Top 18 (drafted players first, undrafted starters fill the rest), ranked by career
 Win Shares. Players inactive two or more seasons and not on a current roster are
 highlighted red.
 
