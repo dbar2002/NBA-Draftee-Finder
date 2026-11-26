@@ -40,8 +40,19 @@ h2{font-size:clamp(34px,5.5vw,56px);line-height:1;margin:0}
 .tools{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;padding:16px 0}
 .tools input[type=search]{font:16px Inter,sans-serif;height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:min(320px,100%)}
 .tools label{display:flex;gap:8px;align-items:center;font-size:15px;cursor:pointer;min-height:44px}
+.tools select{font:16px Inter,sans-serif;height:44px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:0 8px}
 .tools input[type=checkbox]{width:20px;height:20px;accent-color:var(--team)}
 .tools select{font:16px Inter,sans-serif;height:44px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);padding:0 8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{font:600 15px Inter,sans-serif;min-height:44px;padding:0 16px;border:0;background:var(--bg);color:var(--ink);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--team);color:var(--teamink)}
+.note{color:var(--mute);font-size:14px;margin:0 0 8px}
+.tag.ud{background:light-dark(#fff3d6,#3a2f12)}
+.xl{display:inline-flex;gap:8px;flex-wrap:wrap}
+.xl button{font:600 15px Inter,sans-serif;min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--team);background:var(--bg);color:var(--ink);cursor:pointer}
+.xl button:hover{background:var(--panel)}
+.msg{font-size:14px;color:var(--mute)}
+.tag.tr{background:light-dark(#e6ecff,#1d2540)}
 .count{margin-left:auto;color:var(--mute);font-size:14px}
 .scroll{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:15px}
@@ -68,7 +79,17 @@ footer{color:var(--mute);font-size:13px;padding:20px 0 32px;border-top:1px solid
 .key{display:inline-block;width:12px;height:12px;background:var(--red);border:1px solid var(--redink);vertical-align:-1px;margin-right:4px}
 @media(max-width:760px){.band .wrap{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:600px){
- .count{margin-left:0;width:100%}
+ .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{font:600 15px Inter,sans-serif;min-height:44px;padding:0 16px;border:0;background:var(--bg);color:var(--ink);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--team);color:var(--teamink)}
+.note{color:var(--mute);font-size:14px;margin:0 0 8px}
+.tag.ud{background:light-dark(#fff3d6,#3a2f12)}
+.xl{display:inline-flex;gap:8px;flex-wrap:wrap}
+.xl button{font:600 15px Inter,sans-serif;min-height:44px;padding:0 14px;border-radius:8px;border:1px solid var(--team);background:var(--bg);color:var(--ink);cursor:pointer}
+.xl button:hover{background:var(--panel)}
+.msg{font-size:14px;color:var(--mute)}
+.tag.tr{background:light-dark(#e6ecff,#1d2540)}
+.count{margin-left:0;width:100%}
  .stack thead{display:none}
  .stack tr{display:grid;padding:10px 0;border-bottom:1px solid var(--line)}
  .stack tr.old{background:var(--red)}
@@ -98,17 +119,42 @@ footer{color:var(--mute);font-size:13px;padding:20px 0 32px;border-top:1px solid
 </section>
 <main class="wrap">
  <div class="tools">
+  <div class="seg" role="group" aria-label="View">
+   <button type="button" id="v-top" aria-pressed="true">Top 20</button>
+   <button type="button" id="v-all" aria-pressed="false">Full lists</button>
+  </div>
   <input type="search" id="q" placeholder="Search players or colleges" aria-label="Search players or colleges">
   <label><input type="checkbox" id="hideold"> Hide red rows (inactive 2+ seasons)</label>
-  <label><input type="checkbox" id="onlyhere"> Only still with team</label>
+  <label for="status">Status
+   <select id="status">
+    <option value="all">All players</option>
+    <option value="w">Still with team</option>
+    <option value="l">Played here, then left</option>
+    <option value="t">Traded before playing here</option>
+   </select></label>
+  <span class="xl" id="xl" hidden>
+   <button type="button" id="xl-team">Excel: this team</button>
+   <button type="button" id="xl-all">Excel: all teams</button>
+  </span>
   <span class="count" id="count"></span>
  </div>
+ <section id="topview">
+ <p class="note">Drafted players first, then undrafted players who started here, each ranked by career Win Shares. Inactive players (red) only fill in if a team runs short.</p>
+ <div class="scroll">
+  <table class="stack" id="ttbl">
+   <thead><tr><th class="n">#</th><th>Player</th><th>How acquired</th><th>Last season</th><th>Current team</th><th>Career Win Shares</th></tr></thead>
+   <tbody id="trows"></tbody>
+  </table>
+ </div>
+ </section>
+ <section id="allview" hidden>
  <div class="scroll">
   <table class="stack" id="tbl">
    <thead><tr>
     <th><button data-k="0">Player</button></th>
     <th class="n"><button data-k="1">Drafted</button></th>
     <th class="n"><button data-k="2">Pick</button></th>
+    <th><button data-k="9">Status</button></th>
     <th><button data-k="4">Last season</button></th>
     <th><button data-k="6">Current team</button></th>
     <th><button data-k="8" data-dir="desc">Career Win Shares</button></th>
@@ -123,11 +169,13 @@ footer{color:var(--mute);font-size:13px;padding:20px 0 32px;border-top:1px solid
    <tbody id="urows"></tbody>
   </table>
  </div>
+ </section>
  <footer>
-  <span class="key"></span>Red: last season was 2024-25 or earlier and not on a 2026-27 roster. Drafted players are listed under the team that made the pick; undrafted players under the team they played their first NBA season for. Older team codes count as today's franchise (Seattle → OKC, New Jersey → Brooklyn).
+  <span class="key"></span>Red: last season was 2024-25 or earlier and not on a 2026-27 roster. Drafted players are listed under the team that made the pick ("Traded before playing here" = rights traded on draft night or before his first game, like Luka Dončić from Atlanta to Dallas); undrafted players under the team they played their first NBA season for. Older team codes count as today's franchise (Seattle → OKC, New Jersey → Brooklyn).
   Data from Basketball-Reference, as of November 24, 2026.
  </footer>
 </main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 {
 const DATA = __DATA__;
@@ -137,13 +185,13 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const isOld = r => +String(r[4]).slice(0,4) + 1 <= 2025 && !r[6];
 const codes = Object.keys(T);
-let team = "PHI", sortK = 8, sortDir = "desc";
+let team = "PHI", sortK = 8, sortDir = "desc", view = "top";
 
 function load(){
-  try{ const s = JSON.parse(localStorage.getItem("ndf") || "{}"); if(T[s.team]) team = s.team; $("hideold").checked = !!s.hideold; $("onlyhere").checked = !!s.onlyhere; }catch(e){}
+  try{ const s = JSON.parse(localStorage.getItem("ndf") || "{}"); if(T[s.team]) team = s.team; if(s.view === "all") view = "all"; $("hideold").checked = !!s.hideold; if(ST[s.status]) $("status").value = s.status; }catch(e){}
   const h = location.hash.slice(1).toUpperCase(); if(T[h]) team = h;
 }
-function save(){ try{ localStorage.setItem("ndf", JSON.stringify({team, hideold:$("hideold").checked, onlyhere:$("onlyhere").checked})); }catch(e){} }
+function save(){ try{ localStorage.setItem("ndf", JSON.stringify({team, view, hideold:$("hideold").checked, status:$("status").value})); }catch(e){} }
 
 $("picker").innerHTML = codes.map(c => `<button type="button" id="t-${c}" data-t="${c}" title="${T[c][0]}" aria-pressed="false">${c}</button>`).join("");
 
@@ -155,6 +203,27 @@ function sorted(rows){
     if(x == null) x = k === 8 ? -99 : ""; if(y == null) y = k === 8 ? -99 : "";
     return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * m;
   });
+}
+
+const ST = {w:"Still with team", l:"Played here, then left", t:"Traded before playing here"};
+const statusTag = r => r[9] === "t" ? `<span class="tag tr">Traded away${r[10] ? " · debuted " + esc(r[10]) : ""}</span>` : r[9] === "l" ? `<span class="tag">Left</span>` : `<span class="tag y">With team</span>`;
+const statusText = r => r[9] === "t" ? `Traded before playing here (debuted with ${r[10] || "?"})` : ST[r[9]] || "";
+
+// One team's lists with the current filters. Top 20 = drafted active, undrafted active, then inactive.
+function build(tc){
+  const q = $("q").value.trim().toLowerCase(), st = $("status").value;
+  const keep = r => (!$("hideold").checked || !isOld(r)) && (st === "all" || r[9] === st) && (!q || (r[0]+" "+(r[3]||"")).toLowerCase().includes(q));
+  const all = DATA[tc] || [], und = UND[tc] || [];
+  const byWs = (a,b) => (b[8]||0) - (a[8]||0);
+  const D0 = all.map(r => ["d", r]), U0 = und.map(r => ["u", r]);
+  const top = [
+    ...D0.filter(([,r]) => !isOld(r)).sort((a,b) => byWs(a[1],b[1])),
+    ...U0.filter(([,r]) => !isOld(r)).sort((a,b) => byWs(a[1],b[1])),
+    ...D0.filter(([,r]) => isOld(r)).sort((a,b) => byWs(a[1],b[1])),
+    ...U0.filter(([,r]) => isOld(r)).sort((a,b) => byWs(a[1],b[1]))
+  ].slice(0, 20);
+  return {keep, top, tshow: top.map((x,i) => [i+1, ...x]).filter(([,,r]) => keep(r)),
+          drafted: sorted(all.filter(keep)), undrafted: sorted(und.filter(keep))};
 }
 
 const curTag = r => r[6] ? `<span class="tag ${r[7]==="Yes"?"y":""}">${esc(r[6])}${r[7]==="Yes"?" · still here":""}</span>` : `<span class="tag">Not playing</span>`;
@@ -177,12 +246,10 @@ function render(){
     [(UND[team]||[]).length, "undrafted starters"]
   ].map(([v,l]) => `<div class="fig"><b>${v}</b><span>${l}</span></div>`).join("");
 
-  const q = $("q").value.trim().toLowerCase();
-  const keep = r => (!$("hideold").checked || !isOld(r)) && (!$("onlyhere").checked || r[7] === "Yes") && (!q || (r[0]+" "+(r[3]||"")).toLowerCase().includes(q));
-  let rows = all.filter(keep);
-  rows = sorted(rows);
+  const V = build(team);
+  const keep = V.keep;
+  let rows = V.drafted;
   const max = Math.max(1, ...all.map(r => r[8] || 0));
-  $("count").textContent = `Showing ${rows.length} of ${all.length}`;
   document.querySelectorAll("th button").forEach(b => { if(+b.dataset.k === sortK) b.dataset.dir = sortDir; else delete b.dataset.dir; });
   $("rows").innerHTML = rows.length ? rows.map(r => {
     const ws = r[8] ?? 0, w = Math.max(0, ws) / max * 100;
@@ -191,13 +258,32 @@ function render(){
       <td class="p" data-l="Player">${esc(r[0])}<small>${esc(r[3] || "No college")}</small></td>
       <td class="n" data-l="Drafted">${esc(r[1])}</td>
       <td class="n" data-l="Pick">${esc(r[2])}</td>
+      <td data-l="Status">${statusTag(r)}</td>
       <td data-l="Last season">${esc(r[4])}</td>
       <td data-l="Current team">${cur}</td>
       <td data-l="Career WS"><span class="ws"><i><b style="width:${w.toFixed(1)}%"></b></i><em>${ws.toFixed(1)}</em></span></td>
     </tr>`;
-  }).join("") : `<tr><td class="empty" colspan="6">No players match. Clear the search or filters.</td></tr>`;
+  }).join("") : `<tr><td class="empty" colspan="7">No players match. Clear the search or filters.</td></tr>`;
+  const top = V.top, tshow = V.tshow;
+  const tmax = Math.max(1, ...top.map(([,r]) => r[8] || 0));
+  $("trows").innerHTML = tshow.length ? tshow.map(([n,k,r]) => {
+    const ws = r[8] ?? 0, w = Math.max(0, ws) / tmax * 100;
+    const how = k === "d" ? `<span class="tag">${esc(r[1])} · pick ${esc(r[2])}</span> ${statusTag(r)}` : `<span class="tag ud">Undrafted · debut ${esc(r[1])}</span>`;
+    return `<tr class="${isOld(r)?"old":""}">
+      <td class="n" data-l="Rank">${n}</td>
+      <td class="p" data-l="Player">${esc(r[0])}${r[3] ? `<small>${esc(r[3])}</small>` : ""}</td>
+      <td data-l="How acquired">${how}</td>
+      <td data-l="Last season">${esc(r[4])}</td>
+      <td data-l="Current team">${curTag(r)}</td>
+      <td data-l="Career WS"><span class="ws"><i><b style="width:${w.toFixed(1)}%"></b></i><em>${ws.toFixed(1)}</em></span></td>
+    </tr>`;
+  }).join("") : `<tr><td class="empty" colspan="6">No players match.</td></tr>`;
+  $("topview").hidden = view !== "top"; $("allview").hidden = view !== "all";
+  $("v-top").setAttribute("aria-pressed", view === "top"); $("v-all").setAttribute("aria-pressed", view === "all");
+  $("count").textContent = view === "top" ? `Top ${top.length}: ${top.filter(([k]) => k === "d").length} drafted, ${top.filter(([k]) => k === "u").length} undrafted` : `Showing ${rows.length} of ${all.length} drafted`;
+
   const uall = UND[team] || [];
-  const urows = sorted(uall.filter(keep));
+  const urows = V.undrafted;
   const umax = Math.max(1, ...uall.map(r => r[8] || 0), max);
   $("ucount").textContent = `${urows.length} of ${uall.length}`;
   $("urows").innerHTML = urows.length ? urows.map(r => {
@@ -220,7 +306,43 @@ document.querySelectorAll("th button").forEach(b => b.addEventListener("click", 
   else { sortK = k; sortDir = (k === 8 || k === 1 || k === 4) ? "desc" : "asc"; }
   render();
 }));
-["q","hideold","onlyhere"].forEach(id => $(id).addEventListener("input", render));
+$("v-top").addEventListener("click", () => { view = "top"; render(); });
+$("v-all").addEventListener("click", () => { view = "all"; render(); });
+["q","hideold","status"].forEach(id => $(id).addEventListener("input", render));
+
+// ---- Excel export (SheetJS). In claude.ai the file goes through the downloads capability;
+// opened as a local file it downloads directly.
+let dl = null;
+const canLocal = () => !window.claude && window.XLSX;
+const rowsFor = tc => {
+  const V = build(tc);
+  const head = ["Team","Rank","Player","Type","Draft year / debut","Pick","College","Status","Last season","Played 2026-27","Current team","Still with team","Career WS"];
+  const line = (n,k,r) => [tc, n, r[0], k === "d" ? "Drafted" : "Undrafted", r[1], k === "d" ? r[2] : null, r[3], k === "d" ? statusText(r) : (r[7] === "Yes" ? "Still with team" : "Left"), r[4], r[5], r[6], r[7], r[8]];
+  if(view === "top") return [head, ...V.tshow.map(([n,k,r]) => line(n,k,r))];
+  return [head, ...V.drafted.map(r => line(null,"d",r)), ...V.undrafted.map(r => line(null,"u",r))];
+};
+const sheetOf = aoa => { const ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = [6,6,24,10,14,6,20,30,11,10,10,10,9].map(w => ({wch:w})); ws["!autofilter"] = {ref: XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:Math.max(aoa.length-1,1), c:12}})}; return ws; };
+async function exportXL(scope){
+  if(!window.XLSX) return;
+  const wb = XLSX.utils.book_new();
+  const st = $("status").value, tag = (view === "top" ? "Top20" : "Full") + (st === "all" ? "" : "_" + {w:"StillWithTeam",l:"Left",t:"TradedAway"}[st]);
+  if(scope === "team") XLSX.utils.book_append_sheet(wb, sheetOf(rowsFor(team)), team);
+  else {
+    const body = codes.flatMap(c => rowsFor(c).slice(1));
+    XLSX.utils.book_append_sheet(wb, sheetOf([rowsFor(team)[0], ...body]), "All teams");
+    codes.forEach(c => XLSX.utils.book_append_sheet(wb, sheetOf(rowsFor(c)), c));
+  }
+  const name = `NBA_${scope === "team" ? team : "AllTeams"}_${tag}.xlsx`;
+  if(dl){
+    const buf = XLSX.write(wb, {bookType:"xlsx", type:"array"});
+    try{ await dl.save({filename:name, data:new Uint8Array(buf)}); }catch(e){ if(e && e.code === "declined") return; }
+  } else XLSX.writeFile(wb, name);
+}
+$("xl-team").addEventListener("click", () => exportXL("team"));
+$("xl-all").addEventListener("click", () => exportXL("all"));
+const showXL = () => { if(window.XLSX && (dl || canLocal())) $("xl").hidden = false; };
+if(window.claude && window.claude.use){ window.claude.use("downloads").then(d => { dl = d; showXL(); }).catch(() => {}); }
+else showXL();
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1).toUpperCase(); if(T[h] && h !== team){ team = h; render(); } });
 load(); render();
 }

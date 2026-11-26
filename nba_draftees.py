@@ -8,7 +8,8 @@ Pulls from Basketball-Reference:
   * /leagues/NBA_<year>_advanced.html   Win Shares by season (summed to career)
 
 Output: one .xlsx with a Summary tab and one tab per franchise.
-Each team tab lists its active draftees, then the active undrafted players who
+A Top 20 tab ranks each team's best 20: drafted players first, then undrafted
+starters to fill. Each team tab lists its active draftees, then the active undrafted players who
 played their first NBA season with that team, both ranked by career Win Shares. Players who haven't played in the
 last two seasons and aren't on a current roster are highlighted red and placed at the bottom.
 
@@ -81,7 +82,7 @@ class Fetcher:
 
     def get(self, path, must_contain):
         url = BASE + path
-        key = self.cache_dir / (hashlib.md5(url.encode()).hexdigest() + ".html")
+        key = self.cache_dir / (hashlib.md5(url.encode()).hexdigest() + ".v2.html")
         if key.exists() and time.time() - key.stat().st_mtime < self.cache_secs:
             return key.read_text(encoding="utf-8")
 
@@ -96,6 +97,9 @@ class Fetcher:
                 print(f"  network error on {path}: {e}", file=sys.stderr)
                 time.sleep(10 * (attempt + 1))
                 continue
+            # BBR doesn't always send a charset, and requests then assumes Latin-1,
+            # which garbles names like Şengün and Jokić. The pages are UTF-8.
+            r.encoding = "utf-8"
             if r.status_code == 404:
                 return None
             if r.status_code == 429:
@@ -279,7 +283,10 @@ def build_undrafted(active, drafts, career, last_seen, current_team, first_team,
     return {t: rank(v) for t, v in by_team.items()}
 
 
-def build_rows(active, drafts, career, last_seen, current_team, current_end, red_cutoff):
+STATUS = {"w": "Still with team", "l": "Played here, then left", "t": "Traded before playing here"}
+
+
+def build_rows(active, drafts, career, last_seen, current_team, current_end, red_cutoff, first_team=None):
     by_team = defaultdict(list)
     for pid, p in active.items():
         d = drafts.get(pid)
@@ -290,8 +297,22 @@ def build_rows(active, drafts, career, last_seen, current_team, current_end, red
             continue
         r = player_row(p, pid, franchise, career, last_seen, current_team, current_end, red_cutoff)
         r.update(year=d["year"], pick=d["pick"], round="1st" if d["pick"] <= 30 else "2nd", college=d["college"])
+        ft = (first_team or {}).get(pid)
+        ft = FRANCHISE.get(ft, ft) if ft else None
+        r["debut_team"] = ft
+        # t = never played for the drafting team (draft-night trade, or traded before his debut)
+        r["status"] = "t" if ft and ft != franchise else ("w" if r["still"] == "Yes" else "l")
         by_team[franchise].append(r)
     return {t: rank(v) for t, v in by_team.items()}
+
+
+def top20(drafted, undrafted, n=20):
+    """Drafted first, then undrafted starters, each by career WS; inactive (red) last."""
+    key = lambda r: -r["ws"]
+    d = [("Drafted", r) for r in drafted]
+    u = [("Undrafted", r) for r in undrafted]
+    pick = lambda rows, red: sorted([x for x in rows if x[1]["red"] == red], key=lambda x: key(x[1]))
+    return (pick(d, False) + pick(u, False) + pick(d, True) + pick(u, True))[:n]
 
 
 def write_workbook(by_team, undrafted, current_end, out):
@@ -320,9 +341,30 @@ def write_workbook(by_team, undrafted, current_end, out):
     for col in "CDEF":
         s.column_dimensions[col].width = 18
 
+    # Top 20 per team
+    tw = wb.create_sheet("Top 20")
+    tw.append(["Team", "Rank", "Player", "Type", "Draft", "Last Season",
+               "Current Team", "Still With Team", "Career WS"])
+    for c in tw[1]:
+        c.fill = HEADER
+    for t in teams:
+        for i, (kind, r) in enumerate(top20(by_team.get(t, []), undrafted.get(t, [])), start=1):
+            how = f"{r['year']} #{r['pick']}" if kind == "Drafted" else \
+                  (f"Undrafted, debut {season_label(r['first'])}" if r["first"] else "Undrafted")
+            tw.append([t, i, r["name"], kind, how, season_label(r["last"]),
+                       r["cur"] or None, r["still"], r["ws"]])
+            tw.cell(tw.max_row, 9).number_format = "0.0"
+            if r["red"]:
+                for c in tw[tw.max_row]:
+                    c.fill = RED
+    tw.freeze_panes = "A2"
+    tw.auto_filter.ref = f"A1:I{tw.max_row}"
+    for col, w in zip("ABCDEFGHI", [7, 6, 24, 10, 22, 11, 12, 13, 10]):
+        tw.column_dimensions[col].width = w
+
     headers = ["Player", "Draft Year", "Pick", "Round", "College", "Last Season",
-               f"Played {cur}", "Current Team", "Still With Team", "Career WS"]
-    widths = [24, 10, 6, 7, 22, 11, 13, 12, 13, 11]
+               f"Played {cur}", "Current Team", "Still With Team", "Career WS", "Status"]
+    widths = [24, 10, 6, 7, 22, 11, 13, 12, 13, 11, 30]
     for t in teams:
         ws = wb.create_sheet(t)
         ws.append(headers)
@@ -330,7 +372,8 @@ def write_workbook(by_team, undrafted, current_end, out):
             c.fill = HEADER
         for r in by_team.get(t, []):
             ws.append([r["name"], r["year"], r["pick"], r["round"], r["college"],
-                       season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"]])
+                       season_label(r["last"]), r["played"], r["cur"] or None, r["still"], r["ws"],
+                       STATUS[r["status"]] + (f" (debuted with {r['debut_team']})" if r["status"] == "t" else "")])
             row = ws.max_row
             ws.cell(row, 10).number_format = "0.0"
             if r["red"]:
@@ -353,8 +396,8 @@ def write_workbook(by_team, undrafted, current_end, out):
                 for c in ws[row]:
                     c.fill = RED
         ws.freeze_panes = "B2"
-        ws.auto_filter.ref = f"A1:J{max(len(by_team.get(t, [])) + 1, 2)}"
-        for col, w in zip("ABCDEFGHIJ", widths):
+        ws.auto_filter.ref = f"A1:K{max(len(by_team.get(t, [])) + 1, 2)}"
+        for col, w in zip("ABCDEFGHIJK", widths):
             ws.column_dimensions[col].width = w
     wb.save(out)
 
@@ -364,9 +407,11 @@ def write_app(by_team, undrafted, template, out, as_of, current_end, red_cutoff)
     import json
     lab = season_label
     D = {t: [[r["name"], r["year"], r["pick"], r["college"], lab(r["last"]), r["played"],
-              r["cur"] or None, r["still"], r["ws"]] for r in rows] for t, rows in by_team.items()}
+              r["cur"] or None, r["still"], r["ws"], r.get("status", "l"),
+              r.get("debut_team") if r.get("status") == "t" else None] for r in rows] for t, rows in by_team.items()}
     U = {t: [[r["name"], lab(r["first"]) if r["first"] else None, None, None, lab(r["last"]), r["played"],
-              r["cur"] or None, r["still"], r["ws"]] for r in rows] for t, rows in undrafted.items()}
+              r["cur"] or None, r["still"], r["ws"], "w" if r["still"] == "Yes" else "l", None]
+             for r in rows] for t, rows in undrafted.items()}
     html = Path(template).read_text(encoding="utf-8")
     html = html.replace("__DATA__", json.dumps(D, ensure_ascii=False, separators=(",", ":")))
     html = html.replace("__UND__", json.dumps(U, ensure_ascii=False, separators=(",", ":")))
@@ -413,13 +458,15 @@ def main():
     print("4/4 Current rosters")
     ROSTERS.update(get_rosters(f, current_end))
 
-    by_team = build_rows(active, drafts, career, last_seen, current_team, current_end, red_cutoff)
+    by_team = build_rows(active, drafts, career, last_seen, current_team, current_end, red_cutoff, first_team)
     undrafted = build_undrafted(active, drafts, career, last_seen, current_team, first_team, current_end, red_cutoff)
     out = os.path.expanduser(args.out)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
     write_workbook(by_team, undrafted, current_end, out)
     template = Path(__file__).with_name("nba_app_template.html")
     if args.app and template.exists():
         app = os.path.expanduser(args.app)
+        Path(app).parent.mkdir(parents=True, exist_ok=True)
         write_app(by_team, undrafted, template, app, dt.date.today().strftime("%B %d, %Y").replace(" 0", " "),
                   current_end, red_cutoff)
         print(f"Web app -> {app}")
